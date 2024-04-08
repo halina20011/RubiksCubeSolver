@@ -1,0 +1,9 @@
+*.FCBak
+*.blend1
+**/RubiksCubeSolverBoard-backups
+**/fp-info-cache
+**/Gbr
+Model/Stl/
+rubiksCube.mtl
+rubiksCube.obj
+links.txt
