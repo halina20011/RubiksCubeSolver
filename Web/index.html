@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>RubiksCubeSolver</title>
+    <meta charset="UTF-8">
+    <meta name="description" content="RubiksCubeSolver">
+    <link rel="icon" href="#" type="image/x-icon">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0">
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <!-- https://cdnjs.com/libraries/gl-matrix/3.4.2 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/3.4.2/gl-matrix-min.js" integrity="sha512-eV9ExyTa3b+YHr99IBTYpwk4wbgDMDlfW8uTxhywO8dWb810fGUSKDgHhEv1fAqmJT4jyYnt1iWWMW4FRxeQOQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script defer type="module" src="index.js"></script>
+</head>
+<body>
+    <div class="context">
+        <div class="settings">
+            <h2>settings</h2>
+            <div class="arrows">
+                <div></div>
+                <button id="up">UP</button>
+                <div></div>
+                
+                <button id="left">LEFT</button>
+                <div></div>
+                <button id="right">RIGHT</button>
+
+                <div></div>
+                <button id="down">DOWN</button>
+                <div></div>
+            </div>
+            <p>position</p>
+            <div class="sliders">
+                <input type="range" min="-1" max="1" id="x" step="0.1">
+                <input type="range" min="-1" max="1" id="y" step="0.1">
+                <input type="range" min="-1" max="1" id="z" step="0.1" value="-0.3">
+            </div>
+            <p>scale</p>
+            <div class="sliders">
+                <input type="range" min="-2" max="2" id="xS" step="0.1">
+                <input type="range" min="-2" max="2" id="yS" step="0.1">
+                <input type="range" min="-2" max="2" id="zS" step="0.1">
+            </div>
+            <p>rotation</p>
+            <div class="sliders">
+                <input type="range" min="-2" max="2" id="xR" step="0.01">
+                <input type="range" min="-2" max="2" id="yR" step="0.01">
+                <input type="range" min="-2" max="2" id="zR" step="0.01">
+            </div>
+            <input type="range" min="-50" max="50" id="camZ" step="0.01" value="3">
+        </div>
+        <div class="canvas">
+            <canvas width="1000" height="1000"></canvas>
+        </div>
+    </div>
+</body>
+</html>
