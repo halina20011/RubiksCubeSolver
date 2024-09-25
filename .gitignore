@@ -1,5 +1,6 @@
 *.FCBak
 *.blend1
+*.lck
 **/RubiksCubeSolverBoard-backups
 **/fp-info-cache
 **/Gbr
