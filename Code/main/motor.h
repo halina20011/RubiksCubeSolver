@@ -1,0 +1,20 @@
+#ifndef __MOTOR__
+#define __MOTOR__
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <inttypes.h>
+
+#include "esp_rom_sys.h"
+#include "freertos/FreeRTOS.h"
+#include "driver/gpio.h"
+
+struct Motor{
+    uint8_t dirPin, stepPin;
+};
+
+void motorInit(struct Motor *motor, uint8_t dirPin, uint8_t stepPin);
+void motorTest(struct Motor *motor);
+
+#endif
