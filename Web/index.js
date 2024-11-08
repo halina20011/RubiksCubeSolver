@@ -2,7 +2,8 @@ const vertexShaderSource = `#version 300 es
 in vec3 position;
 in vec3 color;
 
-uniform mat4 modelMatrix;
+uniform mat4 localMatrix;
+uniform mat4 globalMatrix;
 uniform mat4 viewMat;
 uniform mat4 projectionMat;
 
@@ -10,7 +11,7 @@ uniform vec3 cUniform;
 
 out vec3 Color;
 void main(){
-    gl_Position = projectionMat * viewMat * modelMatrix * vec4(position, 1);
+    gl_Position = projectionMat * viewMat * globalMatrix * localMatrix * vec4(position, 1);
     Color = color * cUniform;
 }`;
 
@@ -57,56 +58,41 @@ function getUniformLocation(gl, program, uniformName, name, data){
     data[name] = gl.getUniformLocation(program, uniformName);
 }
 
-const cube = new Float32Array([
-    -0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5,  0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5,  0.5, -0.5, 1.0, 1.0, 0.0,
-    -0.5,  0.5, -0.5, 1.0, 1.0, 0.0,
-    -0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-
-    -0.5, -0.5,  0.5, 1.0, 1.0, 0.0,
-     0.5, -0.5,  0.5, 1.0, 1.0, 0.0,
-     0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-     0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-    -0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-    -0.5, -0.5,  0.5, 1.0, 1.0, 0.0,
-
-    -0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-    -0.5,  0.5, -0.5, 1.0, 1.0, 0.0,
-    -0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-    -0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-    -0.5, -0.5,  0.5, 1.0, 1.0, 0.0,
-    -0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-
-     0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-     0.5,  0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5, -0.5,  0.5, 1.0, 1.0, 0.0,
-     0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-
-    -0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5, -0.5,  0.5, 1.0, 1.0, 0.0,
-     0.5, -0.5,  0.5, 1.0, 1.0, 0.0,
-    -0.5, -0.5,  0.5, 1.0, 1.0, 0.0,
-    -0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-
-    -0.5,  0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5,  0.5, -0.5, 1.0, 1.0, 0.0,
-     0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-     0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-    -0.5,  0.5,  0.5, 1.0, 1.0, 0.0,
-    -0.5,  0.5, -0.5, 1.0, 1.0, 0.0
-]);
-
 let modelParsed = false;
+let structureParsed = false;
 const sizes = [];
 const datas = [];
+
+const structure = [];
+const cubeMatrix = [];
 // const MODEL = "cmodel.bin";
 const MODEL = "model.bin";
+const STRUCT = "struct.bin";
 function loadModel(){
+    fetch(STRUCT).then(r => r.blob().then(b => {
+        console.log(b.size);
+        const reader = new FileReader();
+        reader.onload = function(){
+            const arrBuffer = reader.result;
+            const dataView = new DataView(arrBuffer);
+            let offset = 0;
+            while(offset < arrBuffer.byteLength){
+                const size = dataView.getUint32(offset, true);
+                console.log(`coll size: ${size}`);
+                structure.push(size);
+                offset += 4;
+
+                const localMatrix = glMatrix.mat4.create();
+                glMatrix.mat4.identity(localMatrix);
+                cubeMatrix.push(localMatrix);
+            }
+
+            console.log(structure);
+            structureParsed = true;
+        }
+
+        reader.readAsArrayBuffer(b);
+    }));
     fetch(MODEL).then(r => r.blob().then(b => {
         console.log(b.size);
         console.log(b);
@@ -168,7 +154,8 @@ function webglInit(){
     const colorAttribute = gl.getAttribLocation(program, "color");
 
     const uniforms = {};
-    getUniformLocation(gl, program, "modelMatrix", null, uniforms);
+    getUniformLocation(gl, program, "localMatrix", null, uniforms);
+    getUniformLocation(gl, program, "globalMatrix", null, uniforms);
     getUniformLocation(gl, program, "projectionMat", null, uniforms);
     getUniformLocation(gl, program, "viewMat", null, uniforms);
     getUniformLocation(gl, program, "cUniform", null, uniforms);
@@ -219,8 +206,8 @@ function draw(gl, uniforms){
     glMatrix.mat4.lookAt(viewMat, cameraCenter, cameraCenter, cameraUp);
     // console.log(viewMat);
 
-    const modelMatrix = glMatrix.mat4.create();
-    glMatrix.mat4.identity(modelMatrix);
+    const globalMatrix = glMatrix.mat4.create();
+    glMatrix.mat4.identity(globalMatrix);
 
     const xV  = parseFloat(x.value);
     const yV  = parseFloat(y.value);
@@ -236,19 +223,19 @@ function draw(gl, uniforms){
     // console.log(xV, yV, zV, xRV, yRV, zRV);
     const posVec = glMatrix.vec3.fromValues(xV, yV, zV);
     // const rotVec = glMatrix.vec3.fromValues(xRV, yRV, zRV);
-    // glMatrix.mat4.rotate(modelMatrix, modelMatrix, rotVec);
-    glMatrix.mat4.translate(modelMatrix, modelMatrix, posVec);
-    glMatrix.mat4.rotateX(modelMatrix, modelMatrix, xRV);
-    glMatrix.mat4.rotateY(modelMatrix, modelMatrix, yRV);
-    glMatrix.mat4.rotateZ(modelMatrix, modelMatrix, zRV);
+    // glMatrix.mat4.rotate(globalMatrix, globalMatrix, rotVec);
+    glMatrix.mat4.translate(globalMatrix, globalMatrix, posVec);
+    glMatrix.mat4.rotateX(globalMatrix, globalMatrix, xRV);
+    glMatrix.mat4.rotateY(globalMatrix, globalMatrix, yRV);
+    glMatrix.mat4.rotateZ(globalMatrix, globalMatrix, zRV);
 
     if(xSV == 0){
         xSV = 1;
     }
     const scale = glMatrix.vec3.fromValues(xSV, xSV, xSV);
-    glMatrix.mat4.scale(modelMatrix, modelMatrix, scale);
+    glMatrix.mat4.scale(globalMatrix, globalMatrix, scale);
 
-    gl.uniformMatrix4fv(uniforms["modelMatrix"], false, modelMatrix);
+    gl.uniformMatrix4fv(uniforms["globalMatrix"], false, globalMatrix);
 
     gl.uniformMatrix4fv(uniforms["viewMat"], false, viewMat);
     gl.uniformMatrix4fv(uniforms["projectionMat"], false, projectionMat);
@@ -258,27 +245,31 @@ function draw(gl, uniforms){
     const WIREFRAME = new Float32Array([0, 0, 0]);
 
     gl.uniform3fv(uniforms["cUniform"], COLOR);
-    if(modelParsed){
+    if(modelParsed && structureParsed){
+        let counterSize = structure[0];
+        let counterIndex = 0;
         let offset = 0;
-        const from = 1;
         for(let i = 0; i < sizes.length; i++){
-            const size = sizes[i] / 6;
-            if(from <= i){
-                // console.log('dfsdfsdfs');
-                // console.log(datas[i]);
-                gl.drawArrays(gl.TRIANGLES, offset, size);
+            gl.uniformMatrix4fv(uniforms["localMatrix"], false, cubeMatrix[counterIndex]);
+            if(counterSize == 0){
+                counterSize = structure[++counterIndex];
             }
+            const size = sizes[i] / 6;
+            gl.drawArrays(gl.TRIANGLES, offset, size);
             offset += size;
-            // break;
+            counterSize--;
         }
 
         offset = 0;
         gl.uniform3fv(uniforms["cUniform"], WIREFRAME);
+        offset = 0;
         for(let i = 0; i < sizes.length; i++){
-            const size =  sizes[i] / 6;
-            for(let t = 0; t < size / 3; t++){
-                gl.drawArrays(gl.LINE_STRIP, 3 * t, 3);
-            }
+            const size = sizes[i] / 6;
+            gl.drawArrays(gl.LINE_STRIP, offset, size);
+            // for(let t = 0; t < size / 3; t++){
+            //     gl.drawArrays(gl.LINE_STRIP, 3 * t, 3);
+            // }
+            offset += size;
         }
     }
 
