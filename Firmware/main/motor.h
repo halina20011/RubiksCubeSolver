@@ -10,11 +10,16 @@
 #include "freertos/FreeRTOS.h"
 #include "driver/gpio.h"
 
+#include "pinout.h"
+
 struct Motor{
     uint8_t dirPin, stepPin;
 };
 
+void motorsInit(void);
 void motorInit(struct Motor *motor, uint8_t dirPin, uint8_t stepPin);
 void motorTest(struct Motor *motor);
+
+void motorRotateDeg(int id, int deg, int direction);
 
 #endif
