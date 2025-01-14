@@ -2,136 +2,190 @@
 
 const static char *TAG = "wifi";
 
-extern uint8_t handleConnection(const int sock);
+uint8_t handleConnection(httpd_req_t *req, char *message);
 
 int activeSocket = 0;
 
-uint8_t socketReceive(const int sock, char *buffer, const int bufferSize){
-    int len;
-    buffer[0] = 0;
+struct asyncRespArg{
+    httpd_handle_t hd;
+    int fd;
+    char *message;
+};
 
-    len = recv(sock, buffer, bufferSize - 1, 0);
-    if(len < 0){
-        ESP_LOGE(TAG, "Error occurred during receiving: errno %d", errno);
-        return 1;
-    }
-    else if (len == 0) {
-        ESP_LOGW(TAG, "Connection closed");
-        return 1;
-    }
+static void wsAsyncSend(void *arg){
+    ESP_LOGI(TAG, "arg point: %p", arg);
+    struct asyncRespArg *respArg = arg;
+    const char *message = respArg->message;
+    httpd_handle_t hd = respArg->hd;
+    int fd = respArg->fd;
 
-    ESP_LOGI(TAG, "received: >%s<", buffer);
-
-    return 0;
-}
-
-uint8_t socketTransmit(const int sock, char *data){
-    int size = strlen(data);
-    ESP_LOGI(TAG, "Sending %d bytes: %s", size, data);
-
-    // send() can return less bytes than supplied length.
-    // Walk-around for robust implementation.
-    int toWrite = size;
-    while(toWrite > 0){
-        int written = send(sock, data + (size - toWrite), toWrite, 0);
-        if(written < 0){
-            ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-            // failed to retransmit, giving up
-            return 1;
-        }
-
-        toWrite -= written;
-    }
-
-    return 0;
-}
-
-void tcpServerTask(void *pvParameters){
-    char addrStr[128];
-    int addrFamily = (int)pvParameters;
-    int ipProtocol = 0;
-    int keepAlive = 1;
-    int keepIdle = KEEPALIVE_IDLE;
-    int keepInterval = KEEPALIVE_INTERVAL;
-    int keepCount = KEEPALIVE_COUNT;
-    struct sockaddr_storage destAddr;
-
-    if(addrFamily == AF_INET){
-        struct sockaddr_in *destAddrIPv4 = (struct sockaddr_in*)&destAddr;
-        destAddrIPv4->sin_addr.s_addr = htonl(INADDR_ANY);
-        destAddrIPv4->sin_family = AF_INET;
-        destAddrIPv4->sin_port = htons(PORT);
-        ipProtocol = IPPROTO_IP;
-    }
-
-    int listenSock = socket(addrFamily, SOCK_STREAM, ipProtocol);
-    if(listenSock < 0){
-        fprintf(stderr, "Unable to create socket: errno %d\n", errno);
-        vTaskDelete(NULL);
-        return;
-    }
+    httpd_ws_frame_t wsPkt;
+    memset(&wsPkt, 0, sizeof(httpd_ws_frame_t));
+    wsPkt.payload = (uint8_t*)message;
+    wsPkt.len = strlen(message);
+    wsPkt.type = HTTPD_WS_TYPE_TEXT;
     
-    int opt = 1;
-    setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    httpd_ws_send_frame_async(hd, fd, &wsPkt);
+    free(respArg->message);
+    free(respArg);
+}
 
-    printf("socket created\n");
-
-    int err = bind(listenSock, (struct sockaddr *)&destAddr, sizeof(destAddr));
-    if(err != 0){
-        ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
-        ESP_LOGE(TAG, "IPPROTO: %d", addrFamily);
-        goto CLEAN_UP;
-    }
-    ESP_LOGI(TAG, "Socket bound, port %d", PORT);
-
-    err = listen(listenSock, 1);
-    if (err != 0) {
-        ESP_LOGE(TAG, "Error occurred during listen: errno %d", errno);
-        goto CLEAN_UP;
+esp_err_t wsSend(int fd, httpd_handle_t handle, char *message){
+    struct asyncRespArg *respArg = malloc(sizeof(struct asyncRespArg));
+    if(respArg == NULL){
+        return ESP_ERR_NO_MEM;
     }
 
-    while(1){
-        ESP_LOGI(TAG, "Socket listening");
+    respArg->hd = handle;
+    respArg->message = strdup(message);
+    respArg->fd = fd;
+    esp_err_t res = httpd_queue_work(handle, wsAsyncSend, respArg);
+    
+    if(res != ESP_OK){
+        free(respArg->message);
+        free(respArg);
+    }
 
-        struct sockaddr_storage sourceAddr; // Large enough for both IPv4 or IPv6
-        socklen_t addrLen = sizeof(sourceAddr);
-        int sock = accept(listenSock, (struct sockaddr *)&sourceAddr, &addrLen);
-        if(sock < 0){
-            ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
-            break;
+    return res;
+}
+
+
+esp_err_t wsSendReq(httpd_req_t *req, char *message){
+    ESP_LOGI(TAG, "wsSend       req addr: %p", req);
+    struct asyncRespArg *respArg = malloc(sizeof(struct asyncRespArg));
+    if(respArg == NULL){
+        return ESP_ERR_NO_MEM;
+    }
+
+    respArg->hd = req->handle;
+    respArg->message = strdup(message);
+    respArg->fd = httpd_req_to_sockfd(req);
+    esp_err_t res = httpd_queue_work(req->handle, wsAsyncSend, respArg);
+    
+    if(res != ESP_OK){
+        free(respArg->message);
+        free(respArg);
+    }
+
+    return res;
+}
+
+static esp_err_t wsHandler(httpd_req_t *req){
+    if(req->method == HTTP_GET){
+        ESP_LOGI(TAG, "Handshake done, new websocket connection was opened");
+        return ESP_OK;
+    }
+
+    httpd_ws_frame_t wsPkt;
+    uint8_t *buf = NULL;
+    
+    memset(&wsPkt, 0, sizeof(httpd_ws_frame_t));
+    wsPkt.type = HTTPD_WS_TYPE_TEXT;
+    
+    // receive size
+    esp_err_t ret = httpd_ws_recv_frame(req, &wsPkt, 0);
+    if(ret != ESP_OK){
+        ESP_LOGE(TAG, "httpd_ws_recv_frame failed to get fram len with %d", ret);
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "frame len is %zu", wsPkt.len);
+    if(wsPkt.len){
+        buf = calloc(1, wsPkt.len + 1);
+        if(buf == NULL){
+            ESP_LOGE(TAG, "failed to calloc memory for buf");
+            return ESP_ERR_NO_MEM;
         }
 
-        // Set tcp keepalive option
-        setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(int));
-        setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(int));
-        setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(int));
-        setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(int));
-        // Convert ip address to string
-        if (sourceAddr.ss_family == PF_INET) {
-            inet_ntoa_r(((struct sockaddr_in *)&sourceAddr)->sin_addr, addrStr, sizeof(addrStr) - 1);
+        wsPkt.payload = buf;
+        ret = httpd_ws_recv_frame(req, &wsPkt, wsPkt.len);
+        if(ret != ESP_OK){
+            ESP_LOGE(TAG, "httpd_ws_recv_frame failed with %d", ret);
+            free(buf);
+            return ret;
         }
-        
-        ESP_LOGI(TAG, "Socket accepted ip address: %s", addrStr);
+        ESP_LOGI(TAG, "got packet with message: %s", wsPkt.payload);
 
-        handleConnection(sock);
-        // do_retransmit(sock);
-
-        shutdown(sock, 0);
-        close(sock);
-        ESP_LOGI(TAG, "Socket closed");
+        int sd = httpd_req_to_sockfd(req);
+        handleConnection(req, (char*)wsPkt.payload);
+        return ESP_OK;
     }
 
-CLEAN_UP:
-    close(listenSock);
-    vTaskDelete(NULL);
+    ESP_LOGI(TAG, "packet type: %d", wsPkt.type);
+    // if(wsPkt.type == HTTPD_WS_TYPE_TEXT){
+    //     free(buf);
+    // }
+
+    ret = httpd_ws_send_frame(req, &wsPkt);
+    if(ret != ESP_OK){
+        ESP_LOGE(TAG, "httpd_ws_send_frame failed with %d", ret);
+    }
+
+    free(buf);
+    
+    return ESP_OK;   
+}
+
+static const httpd_uri_t ws = {
+    .uri = "/ws",
+    .method = HTTP_GET,
+    .handler = wsHandler,
+    .user_ctx = NULL,
+    .is_websocket = true
+};
+
+static httpd_handle_t startWebserver(void){
+    httpd_handle_t server = NULL;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+
+    ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
+    if(httpd_start(&server, &config) == ESP_OK){
+        ESP_LOGI(TAG, "Registering URI handlers");
+        httpd_register_uri_handler(server, &ws);
+        return server;
+    }
+
+    ESP_LOGI(TAG, "Error while starting server");
+    return NULL;
+}
+
+static void connectHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, void *eventDate){
+    httpd_handle_t *server = (httpd_handle_t*)arg;
+    if(*server == NULL){
+        ESP_LOGI(TAG, "Starting webserver");
+        *server = startWebserver();
+    }
+}
+
+static esp_err_t stopWebserver(httpd_handle_t server){
+    return httpd_stop(server);
+}
+
+static void disconnectHandler(void *arg, esp_event_base_t eventBase, int32_t eventId, void *eventData){
+    httpd_handle_t *server = (httpd_handle_t*) arg;
+    if(*server){
+        ESP_LOGI(TAG, "Stopping webserver");
+        if(stopWebserver(*server) == ESP_OK){
+            *server = NULL;
+        }
+        else{
+            ESP_LOGE(TAG, "Failed to stop http server");
+        }
+    }
 }
 
 void wifiInit(){
+    static httpd_handle_t server = NULL;
+
     ESP_ERROR_CHECK(nvs_flash_init());
     // initialize tcp/ip stack
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-
+    
     ESP_ERROR_CHECK(example_connect());
-    xTaskCreate(tcpServerTask, "tcpServer", 4096, (void*)AF_INET, 5, NULL);
+
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &connectHandler, &server));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &disconnectHandler, &server));
+
+    server = startWebserver();
 }

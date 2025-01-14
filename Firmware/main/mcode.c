@@ -2,13 +2,14 @@
 
 const static char *TAG = "mcode";
 
-struct CommandQueue commandQueue;
+struct CommandQueue commandQueue = {};
 
 extern struct Motor *motors;
 
 // create a command queue
 void commandQueueInit(){
     commandQueue.currCommandIndex = 0;
+    commandQueue.lastCommandIndex = 0;
     commandQueue.size = 0;
     commandQueue.idCounter = 0;
 }
@@ -21,15 +22,16 @@ bool commandQueueFull(){
     return COMMAND_QUEUE_SIZE <= commandQueue.size;
 }
 
-uint8_t commandQueuePush(struct Command command){
+uint8_t commandQueuePush(struct Command *command){
     if(COMMAND_QUEUE_SIZE <= commandQueue.size){
         return 1;
     }
 
     commandQueue.size++;
     
-    command.id = commandQueue.idCounter++;
-    commandQueue.queue[commandQueue.lastCommandIndex] = command;
+    command->id = commandQueue.idCounter++;
+    memcpy(&commandQueue.queue[commandQueue.lastCommandIndex], command, sizeof(struct Command));
+
     commandQueue.lastCommandIndex = (commandQueue.lastCommandIndex + 1) % COMMAND_QUEUE_SIZE;
 
     return 0;
@@ -63,10 +65,14 @@ void processCommandQueue(){
             const int deg = command.deg;
             const uint8_t direction = command.direction;
 
-            socketSend(command.sock, 30, "processing;%i", cmdId);
+            char data[30] = {};
+            snprintf(data, 30, "processing;%i\n", id);
+            wsSend(command.fd, command.handle, data);
 
+            // WS_SEND(command.req, 30, "processing;%i", cmdId);
+            //
             motorRotateDeg(id, deg, direction);
-            socketSend(command.sock, 30, "finished;%i", cmdId);
+            // WS_SEND(command.req, 30, "finished;%i", cmdId);
         }
         else{
 
@@ -77,13 +83,13 @@ void processCommandQueue(){
 uint8_t parseCommand(char *commandBuffer, struct Command *command){
     char commandTypeChar = commandBuffer[0];
 
-    ESP_LOGI(TAG, "buffer %s\n", commandBuffer);
-    ESP_LOGI(TAG, "commandType: %c %i\n", commandTypeChar, commandTypeChar == 'R');
+    // ESP_LOGI(TAG, "buffer %s\n", commandBuffer);
+    // ESP_LOGI(TAG, "commandType: %c %i\n", commandTypeChar, commandTypeChar == 'R');
     if(commandTypeChar == 'R'){
         int moveType = 0;
         int i1 = 0, i2 = 0, i3 = 0;
         sscanf(commandBuffer, "R%i %i %i %i", &moveType, &i1, &i2, &i3);
-        ESP_LOGI(TAG, "parsed %i %i %i", i1, i2, i3);
+        // ESP_LOGI(TAG, "parsed %i %i %i", i1, i2, i3);
         command->commandType = COMMAND_TYPE_R;
 
         command->motorId = i1;
@@ -100,33 +106,28 @@ uint8_t parseCommand(char *commandBuffer, struct Command *command){
     return 1;
 }
 
-uint8_t handleConnection(const int sock){
-    char buffer[MAX_COMMAND_SIZE + 1] = {};
-
-    while(1){
-        if(socketReceive(sock, buffer, MAX_COMMAND_SIZE)){
-            return 1;
-        }
-
-        if(commandQueueFull()){
-            char data[] = "commandQueueIsFull;-1\n";
-            socketTransmit(sock, data);
-        }
-        
-        struct Command command = {};
-        
-        if(parseCommand(buffer, &command) == 0){
-            int id = commandQueuePush(command);
-            char data[30] = {};
-            snprintf(data, 30, "ok;%i\n", id);
-            socketTransmit(sock, data);
-        }
-        else{
-            char data[] = "invalidCommand;-1\n";
-            socketTransmit(sock, data);
-        }
-
-        // char data[] = "UwU\n";
-        // socketTransmit(sock, data);
+uint8_t handleConnection(httpd_req_t *req, char *message){
+    if(commandQueueFull()){
+        char data[] = "commandQueueIsFull;-1\n";
+        wsSendReq(req, data);
     }
+    
+    struct Command command = {};
+    
+    if(parseCommand(message, &command) == 0){
+        command.handle = req->handle;
+        command.fd = httpd_req_to_sockfd(req);
+        int id = commandQueuePush(&command);
+        char data[30] = {};
+        snprintf(data, 30, "ok;%i\n", id);
+        wsSendReq(req, data);
+    }
+    else{
+        char data[] = "invalidCommand;-1\n";
+        wsSendReq(req, data);
+    }
+
+    // char data[] = "UwU\n";
+    // socketTransmit(sock, data);
+    return 0;
 }

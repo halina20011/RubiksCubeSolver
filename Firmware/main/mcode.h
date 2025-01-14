@@ -34,14 +34,16 @@ enum CommandType{
     COMMAND_TYPE_NULL,
 };
 
-#define MAX(a, b)
 #define MS2(s1 ,s2) (MAX(sizeof(s1), sizeof(s2)))
 #define MAX_COMMAND_DATA_SIZE (MS2(struct CommandRotate));
 
 struct Command{
     enum CommandType commandType;
     int id;
-    int sock;
+
+    httpd_handle_t handle;
+    int fd;
+    
     uint8_t motorId, direction;
     int deg;
 };
@@ -60,11 +62,11 @@ uint8_t mcodeQueueSize(void);
 
 uint8_t commandQueueSize(void);
 bool commandQueueFull(void);
-uint8_t commandQueuePush(struct Command command);
+uint8_t commandQueuePush(struct Command *command);
 uint8_t commandQueuePop(struct Command *command);
 
 uint8_t parseCommand(char *commandBuffer, struct Command *command);
 
-uint8_t handleConnection(const int sock);
+uint8_t handleConnection(httpd_req_t *req, char *message);
 
 #endif
